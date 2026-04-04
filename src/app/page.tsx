@@ -313,6 +313,7 @@ export default function Home() {
               activeTabId={activeTabId}
               onSelectTab={setActiveTabId}
               onTabStateChange={handleTabStateChange}
+              onOpenQuery={(sql) => addWindow("query", { title: "Query", initialQuery: sql })}
             />
           )}
         </div>

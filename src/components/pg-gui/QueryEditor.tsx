@@ -1,12 +1,42 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
+import { AgGridReact } from "ag-grid-react";
+import {
+  AllCommunityModule,
+  ModuleRegistry,
+  colorSchemeLight,
+  themeQuartz,
+  type ColDef,
+} from "ag-grid-community";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import JsonCell from "./JsonCell";
+import SidePanel from "./SidePanel";
 import { api, Connection, QueryResult } from "@/lib/api";
-import { Play, Save, Clock, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Play, Save, Clock, AlertCircle, CheckCircle2, Copy, Check } from "lucide-react";
+import { isJsonValue } from "./JsonCell";
+
+ModuleRegistry.registerModules([AllCommunityModule]);
+
+const gridTheme = themeQuartz.withPart(colorSchemeLight).withParams({
+  backgroundColor: "#fff",
+  headerBackgroundColor: "#f8fafc",
+  oddRowBackgroundColor: "#fcfcfd",
+  rowHoverColor: "rgba(15, 23, 42, 0.02)",
+  borderColor: "#e2e8f0",
+  fontFamily: "var(--font-inter), system-ui, sans-serif",
+  fontSize: 13,
+  headerFontSize: 12,
+  headerFontWeight: 500,
+  cellHorizontalPadding: 14,
+  headerTextColor: "#64748b",
+  foregroundColor: "#1e293b",
+  accentColor: "#0f172a",
+  borderRadius: 0,
+  wrapperBorderRadius: 0,
+});
 
 const WRITE_PATTERNS = /^\s*(INSERT|UPDATE|DELETE|TRUNCATE|UPSERT|MERGE)\b/i;
 const SCHEMA_PATTERNS = /^\s*(CREATE|ALTER|DROP|GRANT|REVOKE|COMMENT\s+ON)\b/i;
@@ -32,6 +62,10 @@ export default function QueryEditor({
   const [error, setError] = useState("");
   const [saveName, setSaveName] = useState("");
   const [showSave, setShowSave] = useState(false);
+  const [detailPanel, setDetailPanel] = useState<{
+    field: string;
+    value: unknown;
+  } | null>(null);
 
   const runQuery = useCallback(async () => {
     if (!query.trim()) return;
@@ -82,6 +116,37 @@ export default function QueryEditor({
     },
     [runQuery]
   );
+
+  const gridContext = useMemo(
+    () => ({
+      onOpenDetail: (field: string, value: unknown) => {
+        setDetailPanel({ field, value });
+      },
+    }),
+    []
+  );
+
+  const columnDefs: ColDef[] = useMemo(
+    () =>
+      result
+        ? result.fields.map((field) => ({
+            field,
+            sortable: false,
+            filter: false,
+            resizable: true,
+            minWidth: 120,
+            headerName: field,
+            cellRenderer: JsonCell,
+          }))
+        : [],
+    [result]
+  );
+
+  const detailDisplayValue = detailPanel
+    ? isJsonValue(detailPanel.value)
+      ? JSON.stringify(detailPanel.value, null, 2)
+      : String(detailPanel.value ?? "")
+    : "";
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -166,45 +231,16 @@ export default function QueryEditor({
       )}
 
       {/* Results */}
-      <ScrollArea className="flex-1">
+      <div className="flex-1 overflow-hidden relative">
         {result && result.fields.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
-              <thead>
-                <tr className="border-b border-[#e2e8f0]">
-                  {result.fields.map((field) => (
-                    <th
-                      key={field}
-                      className="px-4 py-2.5 text-left font-medium text-slate-500 bg-[#f8fafc] whitespace-nowrap sticky top-0 text-[12px]"
-                    >
-                      {field}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row, i) => (
-                  <tr
-                    key={i}
-                    className="border-b border-[#f1f5f9] hover:bg-[#f8fafc] transition-colors"
-                  >
-                    {result.fields.map((field) => (
-                      <td
-                        key={field}
-                        className="px-4 py-2 max-w-[300px] truncate font-mono text-[12px] text-slate-600"
-                      >
-                        {row[field] === null ? (
-                          <span className="text-slate-300 italic">NULL</span>
-                        ) : (
-                          String(row[field])
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <AgGridReact
+            rowData={result.rows}
+            columnDefs={columnDefs}
+            defaultColDef={{ flex: 1, minWidth: 120 }}
+            theme={gridTheme}
+            suppressMovableColumns={true}
+            context={gridContext}
+          />
         )}
         {result && result.fields.length === 0 && (
           <div className="flex items-center gap-2 p-4 text-sm text-emerald-600">
@@ -212,7 +248,54 @@ export default function QueryEditor({
             Query executed. {result.rowCount} rows affected.
           </div>
         )}
-      </ScrollArea>
+
+        {/* Cell detail side panel */}
+        <SidePanel
+          open={detailPanel !== null}
+          title={detailPanel?.field || ""}
+          onClose={() => setDetailPanel(null)}
+        >
+          {detailPanel && (
+            <CellDetailContent value={detailDisplayValue} />
+          )}
+        </SidePanel>
+      </div>
+    </div>
+  );
+}
+
+function CellDetailContent({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100">
+        <button
+          onClick={handleCopy}
+          className="text-[11px] text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-50 flex items-center gap-1 cursor-pointer"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 text-emerald-500" />
+              Copied
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              Copy
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="flex-1 overflow-auto p-4 text-[12px] font-mono text-slate-700 leading-relaxed whitespace-pre-wrap bg-slate-50/50">
+        {value}
+      </pre>
     </div>
   );
 }

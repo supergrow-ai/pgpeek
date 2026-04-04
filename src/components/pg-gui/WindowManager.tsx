@@ -43,6 +43,7 @@ interface WindowManagerProps {
   activeTabId: number | null;
   onSelectTab: (id: number) => void;
   onTabStateChange: (id: number, state: { sort?: SortConfig | null; filters?: FilterConfig[]; limit?: number }) => void;
+  onOpenQuery: (sql: string) => void;
 }
 
 export default function WindowManager({
@@ -55,6 +56,7 @@ export default function WindowManager({
   activeTabId,
   onSelectTab,
   onTabStateChange,
+  onOpenQuery,
 }: WindowManagerProps) {
   if (windows.length === 0) return null;
 
@@ -114,6 +116,7 @@ export default function WindowManager({
                 initialFilters={win.filters}
                 initialLimit={win.limit}
                 onStateChange={(state) => onTabStateChange(win.id, state)}
+                onOpenQuery={onOpenQuery}
               />
             )}
             {win.type === "query" && activeConnection && (
