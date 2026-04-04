@@ -30,6 +30,7 @@ export interface WindowItem {
   savedQueryId?: number;
   sort?: SortConfig | null;
   filters?: FilterConfig[];
+  limit?: number;
 }
 
 interface WindowManagerProps {
@@ -41,7 +42,7 @@ interface WindowManagerProps {
   noSchemaChanges: boolean;
   activeTabId: number | null;
   onSelectTab: (id: number) => void;
-  onTabStateChange: (id: number, state: { sort?: SortConfig | null; filters?: FilterConfig[] }) => void;
+  onTabStateChange: (id: number, state: { sort?: SortConfig | null; filters?: FilterConfig[]; limit?: number }) => void;
 }
 
 export default function WindowManager({
@@ -111,6 +112,7 @@ export default function WindowManager({
                 readOnly={readOnly}
                 initialSort={win.sort}
                 initialFilters={win.filters}
+                initialLimit={win.limit}
                 onStateChange={(state) => onTabStateChange(win.id, state)}
               />
             )}

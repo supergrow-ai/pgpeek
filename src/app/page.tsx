@@ -18,6 +18,7 @@ type TabData = {
   savedQueryId?: number;
   sort?: SortConfig | null;
   filters?: FilterConfig[];
+  limit?: number;
 };
 
 interface WorkspaceState {
@@ -43,6 +44,7 @@ function serializeTabs(windows: WindowItem[]): TabData[] {
     savedQueryId: w.savedQueryId,
     sort: w.sort,
     filters: w.filters,
+    limit: w.limit,
   }));
 }
 
@@ -58,6 +60,7 @@ function deserializeTabs(tabs: TabData[]): WindowItem[] {
     savedQueryId: t.savedQueryId,
     sort: t.sort,
     filters: t.filters,
+    limit: t.limit,
   }));
 }
 
@@ -198,10 +201,10 @@ export default function Home() {
     });
   }, [activeTabId]);
 
-  const handleTabStateChange = useCallback((id: number, state: { sort?: SortConfig | null; filters?: FilterConfig[] }) => {
+  const handleTabStateChange = useCallback((id: number, state: { sort?: SortConfig | null; filters?: FilterConfig[]; limit?: number }) => {
     setWindows((prev) =>
       prev.map((w) =>
-        w.id === id ? { ...w, sort: state.sort, filters: state.filters } : w
+        w.id === id ? { ...w, sort: state.sort, filters: state.filters, limit: state.limit ?? w.limit } : w
       )
     );
   }, []);

@@ -378,6 +378,76 @@ describe("Workspace API", () => {
     expect(tbc["3"]).toBeDefined();
   });
 
+  it("PUT /api/workspace persists page limit per tab", async () => {
+    const putReq = makeRequest("http://localhost:3000/api/workspace", {
+      method: "PUT",
+      body: {
+        tabsByConnection: {
+          "1": {
+            tabs: [
+              { id: 1, type: "table", title: "users", schema: "public", table: "users", limit: 50 },
+              { id: 2, type: "table", title: "orders", schema: "public", table: "orders", limit: 250 },
+              { id: 3, type: "table", title: "logs", schema: "public", table: "logs" }, // no limit set
+            ],
+            activeTabId: 1,
+          },
+        },
+      },
+    });
+    await PUT(putReq);
+
+    const getRes = await GET();
+    const data = (await parseJson(getRes)) as Record<string, unknown>;
+    const tbc = data.tabsByConnection as Record<string, { tabs: Array<Record<string, unknown>> }>;
+
+    expect(tbc["1"].tabs[0].limit).toBe(50);
+    expect(tbc["1"].tabs[1].limit).toBe(250);
+    expect(tbc["1"].tabs[2].limit).toBeUndefined();
+  });
+
+  it("PUT /api/workspace persists limit changes independently per tab", async () => {
+    // Initial state: both tabs have default limit
+    const req1 = makeRequest("http://localhost:3000/api/workspace", {
+      method: "PUT",
+      body: {
+        tabsByConnection: {
+          "1": {
+            tabs: [
+              { id: 1, type: "table", title: "users", limit: 100 },
+              { id: 2, type: "table", title: "orders", limit: 100 },
+            ],
+            activeTabId: 1,
+          },
+        },
+      },
+    });
+    await PUT(req1);
+
+    // Update only tab 1's limit
+    const req2 = makeRequest("http://localhost:3000/api/workspace", {
+      method: "PUT",
+      body: {
+        tabsByConnection: {
+          "1": {
+            tabs: [
+              { id: 1, type: "table", title: "users", limit: 500 },
+              { id: 2, type: "table", title: "orders", limit: 100 },
+            ],
+            activeTabId: 1,
+          },
+        },
+      },
+    });
+    await PUT(req2);
+
+    const getRes = await GET();
+    const data = (await parseJson(getRes)) as Record<string, unknown>;
+    const tbc = data.tabsByConnection as Record<string, { tabs: Array<Record<string, unknown>> }>;
+
+    expect(tbc["1"].tabs[0].limit).toBe(500);
+    expect(tbc["1"].tabs[1].limit).toBe(100);
+  });
+
   it("PUT /api/workspace upserts existing keys", async () => {
     // Set initial
     const req1 = makeRequest("http://localhost:3000/api/workspace", {
