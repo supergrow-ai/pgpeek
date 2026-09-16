@@ -41,27 +41,43 @@ const gridTheme = themeQuartz.withPart(colorSchemeLight).withParams({
 const WRITE_PATTERNS = /^\s*(INSERT|UPDATE|DELETE|TRUNCATE|UPSERT|MERGE)\b/i;
 const SCHEMA_PATTERNS = /^\s*(CREATE|ALTER|DROP|GRANT|REVOKE|COMMENT\s+ON)\b/i;
 
+export interface SavedQueryInfo {
+  id: number;
+  name: string;
+  query: string;
+}
+
 interface QueryEditorProps {
   connection: Connection;
   initialQuery?: string;
   savedQueryId?: number;
+  /** Name of the saved query this editor was opened from (pre-fills the save box) */
+  savedQueryName?: string;
   readOnly: boolean;
   noSchemaChanges: boolean;
+  /** Called after a query is created or updated so the parent can refresh titles/lists */
+  onSaved?: (saved: SavedQueryInfo) => void;
 }
 
 export default function QueryEditor({
   connection,
   initialQuery = "",
   savedQueryId,
+  savedQueryName,
   readOnly,
   noSchemaChanges,
+  onSaved,
 }: QueryEditorProps) {
   const [query, setQuery] = useState(initialQuery);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [saveName, setSaveName] = useState("");
+  // Once a query has been saved, subsequent saves update it instead of creating duplicates
+  const [savedId, setSavedId] = useState<number | undefined>(savedQueryId);
+  const [saveName, setSaveName] = useState(savedQueryName ?? "");
   const [showSave, setShowSave] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [detailPanel, setDetailPanel] = useState<{
     field: string;
     value: unknown;
@@ -93,19 +109,27 @@ export default function QueryEditor({
   }, [connection.id, query, readOnly, noSchemaChanges]);
 
   const handleSave = useCallback(async () => {
-    if (!saveName.trim()) return;
+    const name = saveName.trim();
+    if (!name || saving) return;
+    setSaving(true);
+    setError("");
     try {
-      if (savedQueryId) {
-        await api.updateSavedQuery(savedQueryId, saveName, query);
-      } else {
-        await api.saveQuery(saveName, query);
-      }
+      const saved = savedId
+        ? await api.updateSavedQuery(savedId, name, query)
+        : await api.saveQuery(name, query);
+      const id = Number(saved?.id ?? savedId);
+      setSavedId(id);
+      setSaveName(name);
       setShowSave(false);
-      setSaveName("");
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 2000);
+      onSaved?.({ id, name, query });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
     }
-  }, [saveName, query, savedQueryId]);
+  }, [saveName, saving, query, savedId, onSaved]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -131,7 +155,7 @@ export default function QueryEditor({
       result
         ? result.fields.map((field) => ({
             field,
-            sortable: false,
+            sortable: true,
             filter: false,
             resizable: true,
             minWidth: 120,
@@ -187,8 +211,12 @@ export default function QueryEditor({
             className="h-8 text-[12px] text-slate-500 hover:text-slate-700"
             onClick={() => setShowSave(true)}
           >
-            <Save className="h-3.5 w-3.5 mr-1.5" />
-            Save
+            {justSaved ? (
+              <Check className="h-3.5 w-3.5 mr-1.5 text-emerald-500" />
+            ) : (
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            {justSaved ? "Saved" : "Save"}
           </Button>
         ) : (
           <div className="flex items-center gap-1.5">
@@ -200,8 +228,13 @@ export default function QueryEditor({
               autoFocus
               onKeyDown={(e) => e.key === "Enter" && handleSave()}
             />
-            <Button size="sm" className="h-8 text-xs bg-[#0f172a] hover:bg-[#1e293b]" onClick={handleSave}>
-              Save
+            <Button
+              size="sm"
+              className="h-8 text-xs bg-[#0f172a] hover:bg-[#1e293b]"
+              onClick={handleSave}
+              disabled={saving || !saveName.trim()}
+            >
+              {saving ? "Saving..." : savedId ? "Update" : "Save"}
             </Button>
             <Button size="sm" variant="ghost" className="h-8 text-xs text-slate-400" onClick={() => setShowSave(false)}>
               Cancel

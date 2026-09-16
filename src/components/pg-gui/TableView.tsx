@@ -9,11 +9,14 @@ import {
   themeQuartz,
   type ColDef,
   type CellValueChangedEvent,
+  type SortChangedEvent,
 } from "ag-grid-community";
 import { Button } from "@/components/ui/button";
 import JsonCell, { isJsonValue, getClipboardText } from "./JsonCell";
 import SidePanel from "./SidePanel";
 import InsertRowPanel from "./InsertRowPanel";
+import ConfirmDialog from "./ConfirmDialog";
+import BooleanCellEditor from "./BooleanCellEditor";
 import { api, Connection } from "@/lib/api";
 import {
   ChevronLeft,
@@ -81,6 +84,22 @@ const NO_VALUE_OPS = ["IS NULL", "IS NOT NULL"];
 
 export const PAGE_SIZE_OPTIONS = [25, 50, 100, 250, 500];
 
+/** PostgreSQL type names (pg_type.typname) that get the boolean editor */
+const BOOLEAN_TYPES = new Set(["bool"]);
+
+/**
+ * Derive the single-column sort from AG Grid's column state after a header
+ * click. With shift-click multi-sort, the most recently sorted column wins.
+ */
+export function sortFromColumnState(
+  state: Array<{ colId: string; sort?: "asc" | "desc" | null; sortIndex?: number | null }>
+): SortConfig | null {
+  const sorted = state.filter((c) => c.sort === "asc" || c.sort === "desc");
+  if (sorted.length === 0) return null;
+  const last = sorted.reduce((a, b) => ((b.sortIndex ?? 0) > (a.sortIndex ?? 0) ? b : a));
+  return { column: last.colId, direction: last.sort === "desc" ? "DESC" : "ASC" };
+}
+
 interface ExternalFilter {
   column: string;
   operator: string;
@@ -146,6 +165,7 @@ export default function TableView({
 }: TableViewProps) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [fields, setFields] = useState<string[]>([]);
+  const [fieldTypes, setFieldTypes] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [limit, setLimit] = useState(initialLimit ?? 100);
@@ -160,6 +180,11 @@ export default function TableView({
     value: unknown;
   } | null>(null);
   const [showInsertPanel, setShowInsertPanel] = useState(false);
+
+  // Row deletion: selection count drives the button, the dialog gates the action
+  const [selectedCount, setSelectedCount] = useState(0);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Draft state (user edits these)
   const [draftSort, setDraftSort] = useState<SortConfig | null>(
@@ -230,6 +255,7 @@ export default function TableView({
       ]);
       setRows(data.rows);
       setFields(data.fields);
+      setFieldTypes(data.fieldTypes ?? []);
       setTotal(data.total);
       setPkColumns(pks);
     } catch (err: unknown) {
@@ -277,7 +303,12 @@ export default function TableView({
 
   const handleDeleteRow = useCallback(async () => {
     const selectedRows = gridRef.current?.api.getSelectedRows();
-    if (!selectedRows?.length || pkColumns.length === 0) return;
+    if (!selectedRows?.length || pkColumns.length === 0) {
+      setConfirmDeleteOpen(false);
+      return;
+    }
+    setDeleting(true);
+    setError("");
     try {
       for (const row of selectedRows) {
         const pkValues = pkColumns.map((col) => row[col]);
@@ -286,11 +317,42 @@ export default function TableView({
           pkValues,
         });
       }
+      setConfirmDeleteOpen(false);
       loadData();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Delete failed");
+      setConfirmDeleteOpen(false);
+      loadData();
+    } finally {
+      setDeleting(false);
     }
   }, [connection.id, schema, table, pkColumns, loadData]);
+
+  const onSelectionChanged = useCallback(() => {
+    setSelectedCount(gridRef.current?.api.getSelectedRows().length ?? 0);
+  }, []);
+
+  // Header click sorting → server-side ORDER BY (keeps the sort panel in sync)
+  const onSortChanged = useCallback(
+    (event: SortChangedEvent) => {
+      // Ignore sort state pushed in via columnDefs; only react to user clicks
+      if (event.source !== "uiColumnSorted") return;
+      const next = sortFromColumnState(event.api.getColumnState());
+      setDraftSort(next);
+      setAppliedSort(next);
+      setOffset(0);
+      onStateChange?.({
+        sort: next,
+        filters: appliedFilters.map(({ column, operator, value }) => ({
+          column,
+          operator,
+          value,
+        })),
+        limit,
+      });
+    },
+    [appliedFilters, limit, onStateChange]
+  );
 
   // Filter helpers
   const addFilter = () => {
@@ -349,18 +411,32 @@ export default function TableView({
 
   const columnDefs: ColDef[] = useMemo(
     () =>
-      fields.map((field) => ({
-        field,
-        editable: !readOnly && pkColumns.length > 0,
-        sortable: false,
-        filter: false,
-        resizable: true,
-        minWidth: 120,
-        headerName: field,
-        cellClass: pkColumns.includes(field) ? "text-[#0f172a]" : "",
-        cellRenderer: JsonCell,
-      })),
-    [fields, pkColumns, readOnly]
+      fields.map((field, i) => {
+        const isBoolean = BOOLEAN_TYPES.has(fieldTypes[i]);
+        return {
+          field,
+          colId: field,
+          editable: !readOnly && pkColumns.length > 0,
+          sortable: true,
+          // Sorting is done by Postgres; keep the grid's own sort a no-op so
+          // the page order always matches the server's ORDER BY.
+          comparator: () => 0,
+          sort:
+            appliedSort?.column === field
+              ? appliedSort.direction === "DESC"
+                ? "desc"
+                : "asc"
+              : null,
+          filter: false,
+          resizable: true,
+          minWidth: 120,
+          headerName: field,
+          cellClass: pkColumns.includes(field) ? "text-[#0f172a]" : "",
+          cellRenderer: JsonCell,
+          ...(isBoolean ? { cellEditor: BooleanCellEditor } : {}),
+        };
+      }),
+    [fields, fieldTypes, pkColumns, readOnly, appliedSort]
   );
 
   const pageCount = Math.ceil(total / limit);
@@ -422,11 +498,24 @@ export default function TableView({
             <Button
               size="sm"
               variant="ghost"
-              className="h-7 text-[12px] text-red-400 hover:text-red-600 hover:bg-red-50"
-              onClick={handleDeleteRow}
+              className="h-7 text-[12px] text-red-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-40"
+              disabled={selectedCount === 0 || pkColumns.length === 0}
+              title={
+                pkColumns.length === 0
+                  ? "Cannot delete: no primary key detected"
+                  : selectedCount === 0
+                    ? "Select rows to delete"
+                    : undefined
+              }
+              onClick={() => setConfirmDeleteOpen(true)}
             >
               <Trash2 className="h-3.5 w-3.5 mr-1.5" />
               Delete
+              {selectedCount > 0 && (
+                <span className="ml-1.5 bg-red-500 text-white text-[10px] rounded-full min-w-4 h-4 px-1 flex items-center justify-center tabular-nums">
+                  {selectedCount}
+                </span>
+              )}
             </Button>
           </>
         )}
@@ -666,11 +755,35 @@ export default function TableView({
           rowData={rows}
           columnDefs={columnDefs}
           onCellValueChanged={onCellValueChanged}
+          onSelectionChanged={onSelectionChanged}
+          onSortChanged={onSortChanged}
           rowSelection="multiple"
-          defaultColDef={{ flex: 1, minWidth: 120 }}
+          // Disable AG Grid's data-type inference: it swaps in checkbox /
+          // number / date editors based on the first row, which breaks
+          // boolean editing. Editors are chosen from the pg column type instead.
+          defaultColDef={{ flex: 1, minWidth: 120, cellDataType: false }}
+          sortingOrder={["asc", "desc", null]}
           theme={gridTheme}
           suppressMovableColumns={true}
           context={gridContext}
+        />
+
+        <ConfirmDialog
+          open={confirmDeleteOpen}
+          title={selectedCount === 1 ? "Delete 1 row?" : `Delete ${selectedCount} rows?`}
+          description={
+            <>
+              {selectedCount === 1 ? "This row" : "These rows"} will be permanently
+              deleted from{" "}
+              <span className="font-mono text-slate-700">
+                {schema}.{table}
+              </span>
+              . This cannot be undone.
+            </>
+          }
+          loading={deleting}
+          onConfirm={handleDeleteRow}
+          onCancel={() => setConfirmDeleteOpen(false)}
         />
 
         {/* Cell detail side panel */}

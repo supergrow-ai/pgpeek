@@ -218,3 +218,119 @@ describe("QueryEditor", () => {
     expect(screen.queryByPlaceholderText("Query name")).not.toBeInTheDocument();
   });
 });
+
+describe("QueryEditor — saved query updates", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("pre-fills the saved query name and updates instead of creating", async () => {
+    vi.mocked(api.updateSavedQuery).mockResolvedValue({
+      id: 7,
+      name: "Active users",
+      query: "SELECT * FROM users WHERE active",
+      created_at: "",
+    });
+    const onSaved = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <QueryEditor
+        connection={mockConnection}
+        initialQuery="SELECT * FROM users"
+        savedQueryId={7}
+        savedQueryName="Active users"
+        readOnly={false}
+        noSchemaChanges={false}
+        onSaved={onSaved}
+      />
+    );
+
+    const textarea = screen.getByPlaceholderText("SELECT * FROM ...");
+    await user.type(textarea, " WHERE active");
+
+    fireEvent.click(screen.getByText("Save"));
+    expect(screen.getByDisplayValue("Active users")).toBeInTheDocument();
+    expect(screen.getByText("Update")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Update"));
+
+    await waitFor(() => {
+      expect(api.updateSavedQuery).toHaveBeenCalledWith(
+        7,
+        "Active users",
+        "SELECT * FROM users WHERE active"
+      );
+    });
+    expect(api.saveQuery).not.toHaveBeenCalled();
+    expect(onSaved).toHaveBeenCalledWith({
+      id: 7,
+      name: "Active users",
+      query: "SELECT * FROM users WHERE active",
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Saved")).toBeInTheDocument();
+    });
+  });
+
+  it("saving a new query twice updates it the second time", async () => {
+    vi.mocked(api.saveQuery).mockResolvedValue({
+      id: 42,
+      name: "Count",
+      query: "SELECT 1",
+      created_at: "",
+    });
+    vi.mocked(api.updateSavedQuery).mockResolvedValue({
+      id: 42,
+      name: "Count",
+      query: "SELECT 1",
+      created_at: "",
+    });
+    const user = userEvent.setup();
+
+    render(
+      <QueryEditor
+        connection={mockConnection}
+        initialQuery="SELECT 1"
+        readOnly={false}
+        noSchemaChanges={false}
+      />
+    );
+
+    fireEvent.click(screen.getByText("Save"));
+    await user.type(screen.getByPlaceholderText("Query name"), "Count");
+    fireEvent.click(screen.getAllByText("Save")[0]);
+    await waitFor(() => expect(api.saveQuery).toHaveBeenCalledWith("Count", "SELECT 1"));
+
+    await waitFor(() => expect(screen.getByText("Saved")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Saved"));
+    expect(screen.getByDisplayValue("Count")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Update"));
+
+    await waitFor(() => {
+      expect(api.updateSavedQuery).toHaveBeenCalledWith(42, "Count", "SELECT 1");
+    });
+    expect(api.saveQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the API error when an update fails", async () => {
+    vi.mocked(api.updateSavedQuery).mockRejectedValue(new Error("Saved query not found"));
+
+    render(
+      <QueryEditor
+        connection={mockConnection}
+        initialQuery="SELECT 1"
+        savedQueryId={3}
+        savedQueryName="Gone"
+        readOnly={false}
+        noSchemaChanges={false}
+      />
+    );
+    fireEvent.click(screen.getByText("Save"));
+    fireEvent.click(screen.getByText("Update"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Saved query not found/)).toBeInTheDocument();
+    });
+  });
+});

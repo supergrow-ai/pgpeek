@@ -66,9 +66,24 @@ export async function GET(
       [...whereParams, limit, offset]
     );
 
+    // Resolve pg type names so the client can pick type-aware editors
+    // (e.g. a true/false picker for boolean columns).
+    const typeIds = [...new Set(dataResult.fields.map((f) => f.dataTypeID))];
+    const typeNames = new Map<number, string>();
+    if (typeIds.length > 0) {
+      const typeResult = await pool.query(
+        `SELECT oid, typname FROM pg_type WHERE oid = ANY($1::oid[])`,
+        [typeIds]
+      );
+      for (const r of typeResult.rows as Array<{ oid: number | string; typname: string }>) {
+        typeNames.set(Number(r.oid), r.typname);
+      }
+    }
+
     return NextResponse.json({
       rows: dataResult.rows,
-      fields: dataResult.fields.map((f: { name: string }) => f.name),
+      fields: dataResult.fields.map((f) => f.name),
+      fieldTypes: dataResult.fields.map((f) => typeNames.get(f.dataTypeID) ?? "unknown"),
       total: parseInt(countResult.rows[0].total),
     });
   } catch (err: unknown) {

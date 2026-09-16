@@ -2,7 +2,7 @@
 
 import { Table2, Terminal, X } from "lucide-react";
 import TableView from "./TableView";
-import QueryEditor from "./QueryEditor";
+import QueryEditor, { SavedQueryInfo } from "./QueryEditor";
 import { Connection } from "@/lib/api";
 
 export interface SortConfig {
@@ -44,6 +44,7 @@ interface WindowManagerProps {
   onSelectTab: (id: number) => void;
   onTabStateChange: (id: number, state: { sort?: SortConfig | null; filters?: FilterConfig[]; limit?: number }) => void;
   onOpenQuery: (sql: string) => void;
+  onQuerySaved: (id: number, saved: SavedQueryInfo) => void;
 }
 
 export default function WindowManager({
@@ -57,6 +58,7 @@ export default function WindowManager({
   onSelectTab,
   onTabStateChange,
   onOpenQuery,
+  onQuerySaved,
 }: WindowManagerProps) {
   if (windows.length === 0) return null;
 
@@ -120,7 +122,15 @@ export default function WindowManager({
               />
             )}
             {win.type === "query" && activeConnection && (
-              <QueryEditor connection={activeConnection} initialQuery={win.initialQuery} savedQueryId={win.savedQueryId} readOnly={readOnly} noSchemaChanges={noSchemaChanges} />
+              <QueryEditor
+                connection={activeConnection}
+                initialQuery={win.initialQuery}
+                savedQueryId={win.savedQueryId}
+                savedQueryName={win.savedQueryId ? win.title : undefined}
+                readOnly={readOnly}
+                noSchemaChanges={noSchemaChanges}
+                onSaved={(saved) => onQuerySaved(win.id, saved)}
+              />
             )}
           </div>
         ))}

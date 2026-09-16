@@ -23,6 +23,8 @@ export interface TableInfo {
 export interface TableData {
   rows: Record<string, unknown>[];
   fields: string[];
+  /** PostgreSQL type name per field (aligned with `fields`), e.g. "bool", "int4" */
+  fieldTypes?: string[];
   total: number;
 }
 
@@ -116,12 +118,12 @@ export const api = {
     }),
 
   getSavedQueries: (): Promise<SavedQuery[]> => request("/saved-queries"),
-  saveQuery: (name: string, query: string) =>
+  saveQuery: (name: string, query: string): Promise<SavedQuery> =>
     request("/saved-queries", {
       method: "POST",
       body: JSON.stringify({ name, query }),
     }),
-  updateSavedQuery: (id: number, name: string, query: string) =>
+  updateSavedQuery: (id: number, name: string, query: string): Promise<SavedQuery> =>
     request(`/saved-queries/${id}`, {
       method: "PUT",
       body: JSON.stringify({ name, query }),

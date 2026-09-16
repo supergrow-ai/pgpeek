@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Sidebar from "@/components/pg-gui/Sidebar";
 import WindowManager, { WindowItem, SortConfig, FilterConfig } from "@/components/pg-gui/WindowManager";
+import type { SavedQueryInfo } from "@/components/pg-gui/QueryEditor";
 import ConnectionDialog from "@/components/pg-gui/ConnectionDialog";
 import { Connection, SavedQuery, api } from "@/lib/api";
 import { Database, ArrowRight } from "lucide-react";
@@ -74,6 +75,7 @@ export default function Home() {
   const [noSchemaChanges, setNoSchemaChanges] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [connectionsKey, setConnectionsKey] = useState(0);
+  const [savedQueriesKey, setSavedQueriesKey] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // In-memory cache of tabs per connection
@@ -175,6 +177,15 @@ export default function Home() {
           return;
         }
       }
+      if (type === "query" && props.savedQueryId) {
+        const existing = windows.find(
+          (w) => w.type === "query" && w.savedQueryId === props.savedQueryId
+        );
+        if (existing) {
+          setActiveTabId(existing.id);
+          return;
+        }
+      }
 
       const id = windowCounter + 1;
       setWindowCounter(id);
@@ -207,6 +218,18 @@ export default function Home() {
         w.id === id ? { ...w, sort: state.sort, filters: state.filters, limit: state.limit ?? w.limit } : w
       )
     );
+  }, []);
+
+  // A query tab was saved/updated: sync its title + id and refresh the sidebar list
+  const handleQuerySaved = useCallback((id: number, saved: SavedQueryInfo) => {
+    setWindows((prev) =>
+      prev.map((w) =>
+        w.id === id
+          ? { ...w, title: saved.name, savedQueryId: saved.id, initialQuery: saved.query }
+          : w
+      )
+    );
+    setSavedQueriesKey((k) => k + 1);
   }, []);
 
   const bringToFront = useCallback((id: number) => {
@@ -254,6 +277,7 @@ export default function Home() {
           onDisconnect={handleDisconnect}
           onShowConnDialog={() => setShowConnDialog(true)}
           connectionsKey={connectionsKey}
+          savedQueriesKey={savedQueriesKey}
           onOpenTable={(schema: string, table: string) =>
             addWindow("table", { title: table, schema, table })
           }
@@ -314,6 +338,7 @@ export default function Home() {
               onSelectTab={setActiveTabId}
               onTabStateChange={handleTabStateChange}
               onOpenQuery={(sql) => addWindow("query", { title: "Query", initialQuery: sql })}
+              onQuerySaved={handleQuerySaved}
             />
           )}
         </div>

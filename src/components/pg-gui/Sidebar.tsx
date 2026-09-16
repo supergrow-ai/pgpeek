@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import ConfirmDialog from "./ConfirmDialog";
 import { api, Connection, TableInfo, SavedQuery } from "@/lib/api";
 import {
   Database,
@@ -26,6 +27,8 @@ interface SidebarProps {
   onDisconnect: () => void;
   onShowConnDialog: () => void;
   connectionsKey: number;
+  /** Bump to reload the saved-queries list (e.g. after a query is saved/updated) */
+  savedQueriesKey?: number;
   onOpenTable: (schema: string, table: string) => void;
   onOpenQuery: () => void;
   onOpenSavedQuery: (sq: SavedQuery) => void;
@@ -41,6 +44,7 @@ export default function Sidebar({
   onDisconnect,
   onShowConnDialog,
   connectionsKey,
+  savedQueriesKey = 0,
   onOpenTable,
   onOpenQuery,
   onOpenSavedQuery,
@@ -58,6 +62,10 @@ export default function Sidebar({
   const [tableSearch, setTableSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [connDropdownOpen, setConnDropdownOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<
+    { kind: "connection" | "savedQuery"; id: number; name: string } | null
+  >(null);
+  const [deleting, setDeleting] = useState(false);
   const tablesCache = useRef<Map<number, TableInfo[]>>(new Map());
 
   const loadConnections = async () => {
@@ -97,7 +105,8 @@ export default function Sidebar({
     if (activeConnection) api.updateConnection(activeConnection.id, { selected_schema: schema });
   }, [activeConnection]);
 
-  useEffect(() => { loadConnections(); loadSavedQueries(); }, [connectionsKey]);
+  useEffect(() => { loadConnections(); }, [connectionsKey]);
+  useEffect(() => { loadSavedQueries(); }, [savedQueriesKey]);
   useEffect(() => {
     if (activeConnection) loadTables(activeConnection);
     else setTables([]);
@@ -120,6 +129,21 @@ export default function Sidebar({
   const handleDeleteSavedQuery = async (id: number) => {
     await api.deleteSavedQuery(id);
     loadSavedQueries();
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setError("");
+    try {
+      if (pendingDelete.kind === "connection") await handleDelete(pendingDelete.id);
+      else await handleDeleteSavedQuery(pendingDelete.id);
+      setPendingDelete(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const schemas = [...new Set(tables.map((t) => t.table_schema))].sort();
@@ -181,9 +205,10 @@ export default function Sidebar({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDelete(conn.id);
-                          if (connections.length <= 1) setConnDropdownOpen(false);
+                          setConnDropdownOpen(false);
+                          setPendingDelete({ kind: "connection", id: conn.id, name: conn.name });
                         }}
+                        title="Delete connection"
                         className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 text-slate-300 hover:text-red-500 transition-all shrink-0"
                       >
                         <Trash2 className="h-3 w-3" />
@@ -291,7 +316,11 @@ export default function Sidebar({
                   </div>
                   <button
                     className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 text-slate-300 hover:text-red-500 transition-all"
-                    onClick={(e) => { e.stopPropagation(); handleDeleteSavedQuery(sq.id); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPendingDelete({ kind: "savedQuery", id: sq.id, name: sq.name });
+                    }}
+                    title="Delete saved query"
                   >
                     <Trash2 className="h-3 w-3" />
                   </button>
@@ -304,6 +333,28 @@ export default function Sidebar({
           </div>
         </div>
       </ScrollArea>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={
+          pendingDelete?.kind === "connection"
+            ? "Delete connection?"
+            : "Delete saved query?"
+        }
+        description={
+          pendingDelete ? (
+            <>
+              <span className="font-medium text-slate-700">{pendingDelete.name}</span>
+              {pendingDelete.kind === "connection"
+                ? " will be removed along with its saved tabs. This cannot be undone."
+                : " will be permanently removed. This cannot be undone."}
+            </>
+          ) : null
+        }
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
 
       {/* Safety */}
       <div className="px-4 py-3 border-t border-slate-100 space-y-2.5 shrink-0">
