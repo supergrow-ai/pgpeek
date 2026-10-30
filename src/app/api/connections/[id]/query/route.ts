@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Pool, QueryConfig } from "pg";
 import { getPool } from "@/lib/pg-pools";
 import db from "@/lib/sqlite";
 
@@ -9,6 +10,20 @@ function getWorkspaceSetting(key: string): unknown {
   const row = db.prepare("SELECT value FROM workspace WHERE key = ?").get(key) as { value: string } | undefined;
   if (!row) return undefined;
   try { return JSON.parse(row.value); } catch { return row.value; }
+}
+
+// Postgres itself refuses any write here, including ones the patterns above can't see,
+// like a CTE or a function. Extended mode takes one statement, so a stacked COMMIT
+// can't end the transaction first.
+async function queryReadOnly(pool: Pool, query: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN TRANSACTION READ ONLY");
+    return await client.query({ text: query, queryMode: "extended" } as QueryConfig);
+  } finally {
+    const broken = await client.query("ROLLBACK").then(() => false, () => true);
+    client.release(broken);
+  }
 }
 
 export async function POST(
@@ -38,7 +53,7 @@ export async function POST(
     }
 
     const start = Date.now();
-    const result = await pool.query(query);
+    const result = readOnly ? await queryReadOnly(pool, query) : await pool.query(query);
     const duration = Date.now() - start;
 
     return NextResponse.json({

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPool } from "@/lib/pg-pools";
+import { quoteIdent } from "@/lib/sql";
 
 const VALID_OPERATORS = ["=", "!=", ">", "<", ">=", "<=", "LIKE", "ILIKE", "IS NULL", "IS NOT NULL"];
 const VALID_DIRECTIONS = ["ASC", "DESC"];
@@ -11,6 +12,7 @@ export async function GET(
   try {
     const { id, schema, table } = await params;
     const pool = getPool(Number(id));
+    const target = `${quoteIdent(schema)}.${quoteIdent(table)}`;
     const url = new URL(req.url);
     const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "100") || 100, 1), 1000);
     const offset = Math.max(parseInt(url.searchParams.get("offset") || "0") || 0, 0);
@@ -33,11 +35,11 @@ export async function GET(
         for (const f of filters) {
           if (!VALID_OPERATORS.includes(f.operator)) continue;
           if (f.operator === "IS NULL") {
-            whereClauses.push(`"${f.column}" IS NULL`);
+            whereClauses.push(`${quoteIdent(f.column)} IS NULL`);
           } else if (f.operator === "IS NOT NULL") {
-            whereClauses.push(`"${f.column}" IS NOT NULL`);
+            whereClauses.push(`${quoteIdent(f.column)} IS NOT NULL`);
           } else {
-            whereClauses.push(`"${f.column}" ${f.operator} $${paramIndex}`);
+            whereClauses.push(`${quoteIdent(f.column)} ${f.operator} $${paramIndex}`);
             whereParams.push(f.value);
             paramIndex++;
           }
@@ -53,16 +55,16 @@ export async function GET(
     let orderSQL = "";
     if (sortCol) {
       const dir = VALID_DIRECTIONS.includes(sortDir.toUpperCase()) ? sortDir.toUpperCase() : "ASC";
-      orderSQL = `ORDER BY "${sortCol}" ${dir}`;
+      orderSQL = `ORDER BY ${quoteIdent(sortCol)} ${dir}`;
     }
 
     const countResult = await pool.query(
-      `SELECT COUNT(*) as total FROM "${schema}"."${table}" ${whereSQL}`,
+      `SELECT COUNT(*) as total FROM ${target} ${whereSQL}`,
       whereParams
     );
 
     const dataResult = await pool.query(
-      `SELECT * FROM "${schema}"."${table}" ${whereSQL} ${orderSQL} LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+      `SELECT * FROM ${target} ${whereSQL} ${orderSQL} LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
       [...whereParams, limit, offset]
     );
 

@@ -11,18 +11,19 @@ import db from "@/lib/sqlite";
 import { makeRequest, parseJson } from "./helpers";
 
 // Mock pg pool so we don't need a real database
-vi.mock("@/lib/pg-pools", () => ({
-  getPool: () => ({
-    query: vi.fn().mockResolvedValue({
-      rows: [{ id: 1 }],
-      fields: [{ name: "id" }],
-      rowCount: 1,
-    }),
-  }),
+vi.mock("@/lib/pg-pools", () => {
+  const query = vi.fn().mockResolvedValue({
+    rows: [{ id: 1 }],
+    fields: [{ name: "id" }],
+    rowCount: 1,
+  });
+  return {
+  getPool: () => ({ query, connect: async () => ({ query, release: vi.fn() }) }),
   setPool: vi.fn(),
   removePool: vi.fn(),
   pools: new Map(),
-}));
+  };
+});
 
 function setWorkspaceSetting(key: string, value: unknown) {
   db.prepare(

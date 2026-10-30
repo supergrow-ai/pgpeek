@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPool } from "@/lib/pg-pools";
+import { quoteIdent } from "@/lib/sql";
 import db from "@/lib/sqlite";
 
 function isReadOnly(): boolean {
@@ -21,12 +22,12 @@ export async function PUT(
     const { pkColumns, pkValues, column, value } = await req.json();
 
     const whereClauses = pkColumns.map(
-      (col: string, i: number) => `"${col}" = $${i + 1}`
+      (col: string, i: number) => `${quoteIdent(col)} = $${i + 1}`
     );
     const queryParams = [...pkValues, value];
 
     await pool.query(
-      `UPDATE "${schema}"."${table}" SET "${column}" = $${queryParams.length} WHERE ${whereClauses.join(" AND ")}`,
+      `UPDATE ${quoteIdent(schema)}.${quoteIdent(table)} SET ${quoteIdent(column)} = $${queryParams.length} WHERE ${whereClauses.join(" AND ")}`,
       queryParams
     );
     return NextResponse.json({ ok: true });
@@ -50,7 +51,7 @@ export async function POST(
     const placeholders = values.map((_, i) => `$${i + 1}`);
 
     const result = await pool.query(
-      `INSERT INTO "${schema}"."${table}" (${columns.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *`,
+      `INSERT INTO ${quoteIdent(schema)}.${quoteIdent(table)} (${columns.map(quoteIdent).join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *`,
       values
     );
     return NextResponse.json(result.rows[0]);
@@ -71,10 +72,10 @@ export async function DELETE(
     const { pkColumns, pkValues } = await req.json();
 
     const whereClauses = pkColumns.map(
-      (col: string, i: number) => `"${col}" = $${i + 1}`
+      (col: string, i: number) => `${quoteIdent(col)} = $${i + 1}`
     );
     await pool.query(
-      `DELETE FROM "${schema}"."${table}" WHERE ${whereClauses.join(" AND ")}`,
+      `DELETE FROM ${quoteIdent(schema)}.${quoteIdent(table)} WHERE ${whereClauses.join(" AND ")}`,
       pkValues
     );
     return NextResponse.json({ ok: true });
